@@ -32,14 +32,13 @@ type Shard struct {
 
 var shards [SHARD_COUNT]*Shard
 func init() {
-  for i:=0;i<SHARD_COUNT;i++ {
+  for i := 0; i < SHARD_COUNT; i++ {
     shards[i] = &Shard {cache: make(map[string]string), times: make(map[string]int64),}
   }
   startCleanupTask()
 }
 
 func main() {
-  fmt.Println("Hello World");
   PORT := ":4000"
   server, err := net.Listen("tcp4", PORT)
   if err != nil {
@@ -63,6 +62,7 @@ func main() {
       fmt.Println(err)
       continue
     }
+
 
 		globalMu.Lock()
     if currentConnections >= MAX_CONNECTIONS {
@@ -89,6 +89,7 @@ func main() {
 }
 
 func handleConnection(conn net.Conn) {
+  //conn.SetDeadline(time.Now().Add(time.Minute)) // disconnect after 1m
 	defer conn.Close()
 	fmt.Printf("Serving %s\n", conn.RemoteAddr().String())
 
@@ -103,7 +104,7 @@ func handleConnection(conn net.Conn) {
 		}
 
     if string(token) != apiKey {
-      conn.Write([]byte("-ERR 1001 access denied"))
+      conn.Write([]byte("-ERR 1001 access denied\n"))
       return
     }
 
@@ -120,16 +121,16 @@ func handleConnection(conn net.Conn) {
 		switch cmdStr {
 		case "GET":
 			result := handleGet(reader)
-			conn.Write([]byte(result))
+			conn.Write([]byte(result + "\n"))
 		case "SET":
 			result := handlePost(reader)
-			conn.Write([]byte(result))
+			conn.Write([]byte(result + "\n"))
 		case "DEL":
 			result := handleDel(reader)
-			conn.Write([]byte(result))
+			conn.Write([]byte(result + "\n"))
     case "RAL":
       result := handleRemoveAll()
-      conn.Write([]byte(result))
+			conn.Write([]byte(result + "\n"))
 		default:
 			conn.Write([]byte("-ERR unknown command\n"))
 		}
@@ -358,17 +359,3 @@ func processQueue() {
     }
   }
 }
-/*
-  Why this is better than REDIS
-  1. Multithreaded
-  2. Needs Mutex locks
-  3. Has sharding within a single instance
-  4. TTL
-  5. Simple Protocol
-  6. API_KEY only access
-  7. 100 concurrent request limit
-  8. Secure cleanup process
-  9. input sanitization
-  10. Has a queue of people when at max capacity
-  11. The only thing left to do is make this a TLS server
-*/

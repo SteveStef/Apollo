@@ -22,11 +22,6 @@ func main() {
 
 
 	basicTests(conn)
-  //ttlExpiryTest()
-  /*
-  stressTest()
-  deleteNonExistentKeyTest()
-  */
 }
 
 // Perform basic SET, GET, DEL operations for single-threaded testing
