@@ -1,86 +1,85 @@
-
 # Go Cache Server with Sharding and API Key Authentication
 
-This project implements a simple, multithreaded TCP cache server in Go, featuring sharding, TTL (Time-To-Live), API key-based authentication, and a connection queue system. The server can handle up to 100 concurrent connections and utilizes mutex locks for safe data access in a multithreaded environment.
+This data store, named **Apollo**, is a high-performance, sharded key-value store tailored to handle a high number of requests from a single client (typically a web server), differentiating it from solutions like Redis. While Redis is optimized for handling multiple simultaneous connections across multiple clients, Apollo is focused on maximizing efficiency for a single, sustained connection with fast retrieval and write operations.
 
-## Features
-- **Sharding**: Data is distributed across multiple shards to improve performance.
-- **TTL (Time-To-Live)**: Keys have optional expiration times.
-- **Multithreading**: Handles concurrent connections with locks.
-- **Queue System**: Incoming connections are queued when the server reaches its maximum capacity.
-- **API Key Authentication**: Only requests with the correct API key are processed.
-- **Simple Protocol**: Supports basic commands like `GET`, `SET`, `DEL`, and `RAL` (Remove All).
+## Key Features
+
+- **Sharded Architecture**: Uses 16 shards to distribute keys, improving data handling efficiency by reducing contention.
+- **TTL Management**: Each entry can optionally have a time-to-live (TTL) set, automatically cleaning expired keys.
+- **Simple Authentication**: API key-based authentication ensures secure access, allowing only clients with the correct key to interact with the server.
+- **Limited Connection Handling**: Designed for single-connection use with a custom worker pool, limiting resource usage while ensuring high throughput for that single client.
+- **Customizable Limits**: Configurable maximum key and value sizes allow for flexibility and adaptability to various use cases.
+- **In-Memory Only**: Optimized for performance with data storage exclusively in memory.
+
+## Differences from Redis
+
+Apollo differs from Redis in several significant ways, making it ideal for scenarios that prioritize single-client, high-frequency access:
+
+- **Single Client Focus**: Apollo is optimized for single-client access, whereas Redis handles multiple concurrent connections.
+- **Simplified API**: Supports basic commands (`GET`, `SET`, `DEL`, `RAL` - Remove All), focusing solely on core key-value storage with optional TTL.
+- **Lightweight Sharding**: Apollo uses 16 shards to improve performance for a single connection, while Redis is a fully distributed system designed for broader scalability.
+- **Reduced Scalability Needs**: This data store is single-instance, making it a streamlined solution for single-client use cases without Redis's distributed setup.
 
 ## Getting Started
 
 ### Prerequisites
-- [Go](https://golang.org/dl/) 1.20 or later
-- Docker (optional, if you want to run it in a container)
+
+- **Go**: Ensure you have Go installed to build and run the server.
+- **Environment File (.env)**: The server requires an API key specified in a `.env` file.
 
 ### Installation
 
 1. Clone the repository:
-    ```bash
-    git clone <repository-url>
-    cd <repository-directory>
-    ```
+   ```bash
+   git clone https://github.com/SteveStef/Apollo.git
+   cd Apollo
+   go build -o Apollo
 
-2. Install dependencies:
-    ```bash
-    go mod download
-    ```
+2. Set up the environment file:
+   - Create a `.env` file in the project root and add your API key:
+     ```
+     API_KEY=<your_api_key>
+     ```
 
-3. Create a `.env` file in the project root and add your API key:
-    ```env
-    API_KEY=your_api_key_here
-    ```
+### Running the Server
 
-4. Run the server:
-    ```bash
-    go run main.go
-    ```
+To start Apollo, simply run:
 
-The server will start listening on port `4000`.
+```bash
+./apollo
+```
 
-### Running with Docker
+The server will start listening on `PORT=4000` by default.
 
-To run the server using Docker, follow these steps:
+### Usage
 
-1. Build the Docker image:
-    ```bash
-    docker build -t go-cache-server .
-    ```
+Apollo supports the following commands via TCP:
 
-2. Run the container:
-    ```bash
-    docker run -p 4000:4000 -e API_KEY=your_api_key_here go-cache-server
-    ```
-
-The server will be running and accessible on `localhost:4000`.
-
-## Usage
-
-The server listens for TCP connections and processes commands in a simple protocol. 
-
-### Commands
-
-- **SET**: Set a key with an optional TTL (Time-To-Live).
+- **SET**: Store a key-value pair with an optional TTL.
 - **GET**: Retrieve a value by key.
-- **DEL**: Delete a key-value pair.
-- **RAL**: Remove all keys.
+- **DEL**: Delete a key.
+- **RAL**: Remove all keys in the data store.
 
-Example commands:
-- `SET`: `SET <key-length> <key> <value-length> <value> <ttl>`
-- `GET`: `GET <key-length> <key>`
-- `DEL`: `DEL <key-length> <key>`
-- `RAL`: `RAL`
+### Example Commands
 
-### Example Code for Client Connection
+To interact with Apollo, you can use a TCP client to send commands in the following formats:
 
-Here's an example of how you could interact with the server from a client:
+- **SET**: `SET <key> <value> <TTL(optional)>`
+- **GET**: `GET <key>`
+- **DEL**: `DEL <key>`
+- **RAL**: `RAL` (clears all keys)
 
-```go
-conn, _ := net.Dial("tcp", "localhost:4000")
-conn.Write([]byte("your_api_key"))
-conn.Write([]byte("SET"))
-conn.Write([]byte("<key and value details>"))
+### Configuration
+
+- **API Key**: Set your API key in the `.env` file for secure access.
+- **Port**: By default, Apollo listens on port `4000`. You can change this in the code if needed.
+- **Custom Limits**: Modify constants such as `MAX_KEY_SIZE` and `MAX_VALUE_SIZE` in the code to adjust key and value length constraints.
+
+## Contributing
+
+Contributions are welcome to enhance Apollo’s functionality! Please fork the repository, create a feature branch, and submit a pull request with your changes.
+
+---
+
+Apollo offers a streamlined, in-memory solution for high-frequency, single-client data storage, bridging simplicity and efficiency for specialized applications. Enjoy!
+
