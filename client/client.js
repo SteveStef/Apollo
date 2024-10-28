@@ -22,7 +22,7 @@ client.on('error', (err) => {
   console.error(`Connection error: ${err.message}`);
 });
 
-export function set(key, val, ttl) {
+function set(key, val, ttl) {
   client.write(Buffer.from(api_key));
   client.write(Buffer.from("SET"));
 
@@ -43,7 +43,7 @@ export function set(key, val, ttl) {
   client.write(ttlBuffer);
 }
 
-export function get(key) {
+function get(key) {
   client.write(Buffer.from(api_key));
   client.write(Buffer.from("GET"));
 
@@ -54,7 +54,7 @@ export function get(key) {
   client.write(Buffer.from(key));
 }
 
-export function del(key) {
+function del(key) {
   client.write(Buffer.from(api_key));
   client.write(Buffer.from("DEL"));
 
@@ -65,17 +65,19 @@ export function del(key) {
   client.write(Buffer.from(key));
 }
 
-export function ral() {
+function ral() {
   client.write(Buffer.from(api_key));
   client.write(Buffer.from("RAL"));
 }
 
-set("foo", "bar", "10");
+set("foo", "bar", "15");
 get("foo");
-del("foo");
-ral();
 
-setTimeout(() => {
-  client.end();
-}, 5000);
+
+
+
+
+
+
+
 

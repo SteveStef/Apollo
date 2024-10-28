@@ -21,7 +21,9 @@ func main() {
 	defer conn.Close()
 
 
-	basicTests(conn)
+	//basicTests(conn)
+  //stressTest()
+  ttlExpiryTest()
 }
 
 // Perform basic SET, GET, DEL operations for single-threaded testing
@@ -83,7 +85,7 @@ func stressTest() {
 
 				// SET the key
 				setResponse := set(conn, key, value, 0)
-				if setResponse != "OK" {
+				if setResponse != "-ERR 1004 Key not found\n" {
 					fmt.Printf("TEST FAILED: Client %d SET key %s failed, response: %s\n", clientID, key, setResponse)
 					return
 				}

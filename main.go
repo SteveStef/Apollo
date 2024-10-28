@@ -14,26 +14,21 @@ import (
 )
 
 const SHARD_COUNT = 16
-const MAX_CONNECTIONS = 100
 const MAX_KEY_SIZE = 256
-const MAX_VALUE_SIZE = 10240 // 10KB
-const MAX_QUEUE_SIZE = 50
-
-var waitingQueue = make(chan net.Conn, MAX_QUEUE_SIZE)
-var currentConnections = 0
-var apiKey string
-var globalMu sync.Mutex
-
-type Shard struct {
-  cache map[string]string
-  times map[string]int64
-  mu sync.RWMutex
-}
+const MAX_VALUE_SIZE = 10240
+const POOL_SIZE = 3
 
 var shards [SHARD_COUNT]*Shard
+var apiKey string
+
+type Shard struct {
+  cache sync.Map
+  times sync.Map
+}
+
 func init() {
   for i := 0; i < SHARD_COUNT; i++ {
-    shards[i] = &Shard {cache: make(map[string]string), times: make(map[string]int64),}
+    shards[i] = &Shard{}
   }
   startCleanupTask()
 }
@@ -55,45 +50,28 @@ func main() {
 	apiKey = os.Getenv("API_KEY")
   fmt.Println("listening on PORT=" + PORT)
 
-  go processQueue()
   for {
     conn, err := server.Accept()
     if err != nil {
       fmt.Println(err)
       continue
     }
-
-
-		globalMu.Lock()
-    if currentConnections >= MAX_CONNECTIONS {
-      if len(waitingQueue) < MAX_QUEUE_SIZE {
-        fmt.Println("Queueing connection", conn.RemoteAddr())
-        waitingQueue <- conn // Add connection to queue
-      } else {
-        fmt.Println("Connection queue full. Rejecting", conn.RemoteAddr())
-        conn.Close() // Queue is full, reject the connection
-      }
-    } else { // not at capacity
-      currentConnections++
-      globalMu.Unlock()
-
-      go func() {
-        handleConnection(conn)
-        globalMu.Lock()
-        currentConnections--
-        globalMu.Unlock()
-      }()
-    }
+    handleConnection(conn) // only have 1 connection at a time
   }
-
 }
 
+
 func handleConnection(conn net.Conn) {
-  //conn.SetDeadline(time.Now().Add(time.Minute)) // disconnect after 1m
 	defer conn.Close()
 	fmt.Printf("Serving %s\n", conn.RemoteAddr().String())
 
+  jobs := make(chan string, 100) // either GET DEL SET RAL
+  results := make(chan string, 100)
+
 	reader := bufio.NewReader(conn)
+  for i := 0; i < POOL_SIZE; i++ {
+    go worker(jobs, results, conn, reader)
+  }
 
 	for {
 		token := make([]byte, len(apiKey))
@@ -114,60 +92,43 @@ func handleConnection(conn net.Conn) {
 			fmt.Println("User has disconnected")
       return
 		}
-    
-    cmdStr := string(command)
-    fmt.Println("command: " + cmdStr)
 
-		switch cmdStr {
-		case "GET":
-			result := handleGet(reader)
-			conn.Write([]byte(result + "\n"))
-		case "SET":
-			result := handlePost(reader)
-			conn.Write([]byte(result + "\n"))
-		case "DEL":
-			result := handleDel(reader)
-			conn.Write([]byte(result + "\n"))
-    case "RAL":
-      result := handleRemoveAll()
-			conn.Write([]byte(result + "\n"))
-		default:
-			conn.Write([]byte("-ERR unknown command\n"))
-		}
-    printShardsWithTTL()
+    jobs <- string(command)
+    response := <- results
+    conn.Write([]byte(response))
 	}
+}
+
+func worker(jobs <-chan string, results chan<- string, conn net.Conn, reader *bufio.Reader) {
+  for command := range jobs {
+    switch command {
+    case "GET":
+      results <- handleGet(reader)
+    case "SET":
+      results <- handlePost(reader)
+    case "DEL":
+      results <- handleDel(reader)
+    case "RAL":
+      results <- handleRemoveAll()
+    default:
+      results <- "-ERR unknown command\n"
+    }
+  }
 }
 
 func handleRemoveAll() string {
   for _, shard := range shards {
-    shard.mu.Lock()
-    shard.cache = make(map[string]string)
-    shard.times = make(map[string]int64)
-    shard.mu.Unlock()
+    shard.cache.Range(func(key, _ interface{}) bool {
+      shard.cache.Delete(key)
+      return true
+    })
+    shard.times.Range(func(key, _ interface{}) bool {
+      shard.times.Delete(key)
+      return true
+    })
   }
   return "OK"
 }
-
-func printShardsWithTTL() {
-  for i, shard := range shards {
-    shard.mu.RLock() // Read lock to safely access shard data
-    
-    if len(shard.cache) != 0 {
-      fmt.Printf("Shard %d: %s", i, " ")
-    }
-    for key, value := range shard.cache {
-      ttl, hasTTL := shard.times[key]
-      if hasTTL {
-        fmt.Printf("  Key: %s, Value: %s, TTL: %d (expires in %d seconds)\n", key, value, ttl, ttl-time.Now().Unix())
-      } else {
-        fmt.Printf("  Key: %s, Value: %s, TTL: None\n", key, value)
-      }
-    }
-    
-    shard.mu.RUnlock()
-  }
-}
-
 
 func handleGet(reader *bufio.Reader) string {
 	lengthBuf := make([]byte, 4) // length of the key
@@ -190,24 +151,20 @@ func handleGet(reader *bufio.Reader) string {
   skey := string(key)
 
   shard := getShard(skey)
-  shard.mu.RLock()
-  ttl, hasTTL := shard.times[skey]
+  ttl, hasTTL := shard.times.Load(skey)
 
-  if hasTTL && ttl <= time.Now().Unix() {
-    delete(shard.cache, skey)
-    delete(shard.times, skey)
-    shard.mu.RUnlock()
+  if hasTTL && ttl.(int64) <= time.Now().Unix() {
+    shard.cache.Delete(skey)
+    shard.times.Delete(skey)
     return "-ERR 1004 Key not found (expired)"
   }
 
-  value, exists := shard.cache[skey]
-  shard.mu.RUnlock()
-
-  if !exists{
+  value, exists := shard.cache.Load(skey)
+  if !exists {
     return "-ERR 1004 Key not found"
   }
 
-  return value
+  return value.(string)
 }
 
 func handlePost(reader *bufio.Reader) string {
@@ -261,14 +218,12 @@ func handlePost(reader *bufio.Reader) string {
   svalue := string(value)
   shard := getShard(skey)
 
-  shard.mu.Lock()
-  shard.cache[skey] = svalue
-
+  shard.cache.Store(skey, svalue)
   if ttl > 0 {
-    shard.times[skey] = time.Now().Unix() + int64(ttl)
+    shard.times.Store(skey, time.Now().Unix()+int64(ttl))
+  } else {
+    shard.times.Delete(skey)
   }
-
-  shard.mu.Unlock()
 
   return "OK"
 }
@@ -293,13 +248,10 @@ func handleDel(reader *bufio.Reader) string {
   }
 
   skey := string(key)
-
   shard := getShard(skey)
 
-	shard.mu.Lock()
-	delete(shard.cache, skey)
-	delete(shard.times, skey)
-	shard.mu.Unlock()
+  shard.cache.Delete(skey)
+  shard.times.Delete(skey)
 
 	return "OK"
 }
@@ -316,46 +268,19 @@ func getShard(key string) *Shard {
 func startCleanupTask() {
   go func() {
     for {
-      time.Sleep(1 * time.Minute)  // Run cleanup every minute
+      time.Sleep(60 * time.Second)
+      now := time.Now().Unix()
+
       for _, shard := range shards {
-        expiredKeys := []string{}
-        shard.mu.RLock()
-        now := time.Now().Unix()
-        for key, expiration := range shard.times {
-          if expiration <= now {
-            expiredKeys = append(expiredKeys, key)
+        shard.times.Range(func(key, value interface{}) bool {
+          if value.(int64) <= now {
+            shard.cache.Delete(key)
+            shard.times.Delete(key)
           }
-        }
-        shard.mu.RUnlock()
-        if len(expiredKeys) > 0 {
-          shard.mu.Lock()
-          for _, key := range expiredKeys {
-            delete(shard.cache, key)
-            delete(shard.times, key)
-          }
-          shard.mu.Unlock()
-        }
+          return true
+        })
       }
     }
   }()
 }
 
-func processQueue() {
-  for conn := range waitingQueue {
-    globalMu.Lock()
-    if currentConnections < MAX_CONNECTIONS {
-      currentConnections++
-      globalMu.Unlock()
-
-      go func() {
-        handleConnection(conn)
-        globalMu.Lock()
-        currentConnections--
-        globalMu.Unlock()
-      }()
-    } else {
-      globalMu.Unlock()
-      time.Sleep(100 * time.Millisecond)
-    }
-  }
-}
